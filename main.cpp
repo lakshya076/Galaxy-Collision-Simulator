@@ -7,6 +7,9 @@
 #include "engine.h"
 #include "arena_allocator.h"
 #include "gravity_aggregator.h"
+#include <algorithm>
+#include <parallel/algorithm>
+#include "morton.h"
 
 using namespace std;
 
@@ -52,6 +55,15 @@ int main() {
         if (stars[i].y > max_y) max_y = stars[i].y;
         if (stars[i].z > max_z) max_z = stars[i].z;
     }
+
+    float global_min = std::min({min_x, min_y, min_z});
+    float global_max = std::max({max_x, max_y, max_z});
+
+    cout << "Sorting stars using Morton Z-Order Curve..." << endl;
+    __gnu_parallel::sort(stars, stars + num_stars, [global_min, global_max](const Star& a, const Star& b) {
+        return get_morton_code(a.x, a.y, a.z, global_min, global_max) < 
+               get_morton_code(b.x, b.y, b.z, global_min, global_max);
+    });
 
     ArenaAllocator arena(1024 * 1024 * 64);
     OctreeNode* root = arena.alloc<OctreeNode>();

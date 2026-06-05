@@ -39,6 +39,11 @@ void query_gravity(
             if (node->is_leaf) {
                 // Particle-to-Particle (Direct Gravity) inside leaf node
                 for (uint32_t i = 0; i < node->star_count; i++) {
+                    if (i + 1 < node->star_count) {
+                        uint32_t next_s_idx = leaf_indices[node->start_star_index + i + 1];
+                        __builtin_prefetch(&all_stars[next_s_idx], 0, 1);
+                    }
+
                     uint32_t s_idx = leaf_indices[node->start_star_index + i];
                     if (s_idx == target_idx) continue;
                     float sdx = all_stars[s_idx].x - star.x;
