@@ -1,6 +1,6 @@
 #include "generator.h"
 
-void spawn_disc(Star* stars, int& current_index, int num, std::mt19937& rng) {
+void spawn_disc(Star* stars, int& current_index, int num, std::mt19937& rng, uint8_t col_r, uint8_t col_g, uint8_t col_b) {
     float G = 1.0f;               
     float M = 100000.0f;          
     float a = 20.0f;              
@@ -43,6 +43,9 @@ void spawn_disc(Star* stars, int& current_index, int num, std::mt19937& rng) {
 
             stars[current_index].mass = particle_mass;
             stars[current_index].is_dm = false;
+            stars[current_index].r = col_r;
+            stars[current_index].g = col_g;
+            stars[current_index].b = col_b;
 
             float vel_star = std::sqrt((G * M * R * R) / std::pow(R*R + a_sqrt * a_sqrt, 1.5f));
             
@@ -57,7 +60,7 @@ void spawn_disc(Star* stars, int& current_index, int num, std::mt19937& rng) {
     }
 }
 
-void spawn_bulge(Star* stars, int& current_index, int num, std::mt19937& rng) {    
+void spawn_bulge(Star* stars, int& current_index, int num, std::mt19937& rng, uint8_t col_r, uint8_t col_g, uint8_t col_b) {    
     float G = 1.0f;               
     float M = 20000.0f;           
     float a = 4.0f;               
@@ -84,6 +87,9 @@ void spawn_bulge(Star* stars, int& current_index, int num, std::mt19937& rng) {
 
         stars[current_index].mass = particle_mass; 
         stars[current_index].is_dm = false; 
+        stars[current_index].r = col_r;
+        stars[current_index].g = col_g;
+        stars[current_index].b = col_b;
 
         float escape_velocity = std::sqrt((2.0f * G * M) / (r + a));
         float speed = escape_velocity * 0.4f * v_dist(rng); 
@@ -127,6 +133,9 @@ void spawn_dark_matter(Star* stars, int& current_index, int num, std::mt19937& r
         
         stars[current_index].mass = particle_mass; 
         stars[current_index].is_dm = true; 
+        stars[current_index].r = 0;
+        stars[current_index].g = 0;
+        stars[current_index].b = 0;
         
         float escape_velocity = std::sqrt((2.0f * G * M_halo) / (r + a));
         float speed = escape_velocity * 0.4f * v_dist(rng); 
@@ -146,11 +155,11 @@ void spawn_dark_matter(Star* stars, int& current_index, int num, std::mt19937& r
 void initial_setup(Star* stars, int num_dark_matter, int num_disc, int num_bulge, std::mt19937& rng) {
     int current_index = 0;
     
-    // Galaxy A
+    // Galaxy A (Warm Palette)
     int start_A = current_index;
     spawn_dark_matter(stars, current_index, num_dark_matter, rng);
-    spawn_disc(stars, current_index, num_disc, rng);
-    spawn_bulge(stars, current_index, num_bulge, rng);
+    spawn_disc(stars, current_index, num_disc, rng, 255, 100, 50);   // Orange/Red Disc
+    spawn_bulge(stars, current_index, num_bulge, rng, 255, 255, 150); // Bright Yellow Core
     int end_A = current_index;
     
     // Clone Galaxy A to B
@@ -171,5 +180,17 @@ void initial_setup(Star* stars, int num_dark_matter, int num_disc, int num_bulge
     for (int i = start_B; i < current_index; i++) {
         stars[i].x += 500.0f;
         stars[i].vx -= 50.0f;
+        
+        // Recolor Galaxy B (Cool Palette)
+        int local_idx = i - start_B;
+        if (local_idx >= num_dark_matter) {
+            if (local_idx < num_dark_matter + num_disc) {
+                // Disc
+                stars[i].r = 50; stars[i].g = 100; stars[i].b = 255; // Deep Blue
+            } else {
+                // Bulge
+                stars[i].r = 200; stars[i].g = 255; stars[i].b = 255; // Cyan/White Core
+            }
+        }
     }
 }
