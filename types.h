@@ -8,7 +8,14 @@ struct Star {
     float mass;
 
     bool is_dm;
+    uint8_t r, g, b;
 }; 
+
+struct PlaybackStar {
+    float x, y, z;
+    uint8_t r, g, b;
+    uint8_t padding;
+}; // used to move the Star metadata in simulation.bin file for OpenGL and saving space
 
 // 32-byte strictly aligned
 struct alignas(32) OctreeNode {
