@@ -114,54 +114,63 @@ __global__ void query_gravity_kernel(
 
     float ax = 0.0f, ay = 0.0f, az = 0.0f;
 
-    // GPU Register stack for traversing depth
-    int stack[64];
+    // Shared memory stack to avoid L1/L2 spills from divergent threads
+    __shared__ int shared_stack[64 * 128]; // 64 depth max, 128 threads
     int stack_ptr = 0;
-    stack[stack_ptr++] = 0; // Root is at index 0
+    shared_stack[stack_ptr * blockDim.x + threadIdx.x] = 0; // Root is at index 0
+    stack_ptr++;
 
     while (stack_ptr > 0) {
-        int node_idx = stack[--stack_ptr];
+        --stack_ptr;
+        int node_idx = shared_stack[stack_ptr * blockDim.x + threadIdx.x];
         const OctreeNode& node = nodes[node_idx];
 
         if (node.is_leaf) {
             for (uint32_t j = 0; j < node.star_count; j++) {
-                uint32_t star_idx = leaf_star_indices[node.start_star_index + j];
+                uint32_t star_idx = __ldg(&leaf_star_indices[node.start_star_index + j]);
                 if (star_idx == i) continue;
 
-                float dx = x[star_idx] - my_x;
-                float dy = y[star_idx] - my_y;
-                float dz = z[star_idx] - my_z;
+                float dx = __ldg(&x[star_idx]) - my_x;
+                float dy = __ldg(&y[star_idx]) - my_y;
+                float dz = __ldg(&z[star_idx]) - my_z;
 
                 float dist_sq = dx * dx + dy * dy + dz * dz + epsilon_sq;
                 float inv_dist = rsqrtf(dist_sq);
                 float inv_dist_cube = inv_dist * inv_dist * inv_dist;
 
-                float f = G * mass[star_idx] * inv_dist_cube;
+                float f = G * __ldg(&mass[star_idx]) * inv_dist_cube;
                 ax += dx * f;
                 ay += dy * f;
                 az += dz * f;
             }
         } else {
             // Calculate distance to center of mass
-            float dx = node_com_x[node_idx] - my_x;
-            float dy = node_com_y[node_idx] - my_y;
-            float dz = node_com_z[node_idx] - my_z;
+            float dx = __ldg(&node_com_x[node_idx]) - my_x;
+            float dy = __ldg(&node_com_y[node_idx]) - my_y;
+            float dz = __ldg(&node_com_z[node_idx]) - my_z;
 
             float dist_sq = dx * dx + dy * dy + dz * dz + epsilon_sq;
-            float dist = sqrtf(dist_sq);
 
-            // Barnes-Hut criteria (theta = 0.5)
-            if (node.half_width * 2.0f < dist) {
-                float inv_dist_cube = 1.0f / (dist * dist_sq);
-                float f = G * node_masses[node_idx] * inv_dist_cube;
+            // Barnes-Hut criteria (theta = 1.0 implicitly from original code)
+            float width = node.half_width * 2.0f;
+            if (width * width < dist_sq) {
+                float inv_dist = rsqrtf(dist_sq);
+                float inv_dist_cube = inv_dist * inv_dist * inv_dist;
+                float f = G * __ldg(&node_masses[node_idx]) * inv_dist_cube;
                 ax += dx * f;
                 ay += dy * f;
                 az += dz * f;
             } else {
                 // Address child index on GPU using relative host pointer arithmetic
                 int child_base_idx = ((const char*)node.first_child - (const char*)cpu_root_pointer) / sizeof(OctreeNode);
+                uint8_t mask = node.active_mask;
                 for (int c = 7; c >= 0; --c) {
-                    stack[stack_ptr++] = child_base_idx + c;
+                    if (mask & (1 << c)) {
+                        if (stack_ptr < 64) {
+                            shared_stack[stack_ptr * blockDim.x + threadIdx.x] = child_base_idx + c;
+                            stack_ptr++;
+                        }
+                    }
                 }
             }
         }
@@ -335,7 +344,7 @@ void cuda_physics_step(
     cudaMemcpy(d_leaf_star_indices, leaf_star_indices, active_leaf_indices * sizeof(uint32_t), cudaMemcpyHostToDevice);
 
     // Launch gravity and integration kernels in parallel SoA space
-    int threads = 256;
+    int threads = 128;
     int blocks = (num_stars + threads - 1) / threads;
 
     query_gravity_kernel<<<blocks, threads>>>(d_x, d_y, d_z, d_mass, num_stars, 

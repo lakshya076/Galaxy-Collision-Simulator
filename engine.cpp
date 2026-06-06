@@ -95,6 +95,7 @@ void node_physics(OctreeNode* node, OctreeNode* root, const Star* stars, float* 
         } else {
             float total_mass = 0.0f;
             float weighted_x = 0.0f, weighted_y = 0.0f, weighted_z = 0.0f;
+            uint8_t mask = 0;
             
             for (int i = 0; i < 8; ++i) {
                 OctreeNode* child = &node->first_child[i];
@@ -102,12 +103,16 @@ void node_physics(OctreeNode* node, OctreeNode* root, const Star* stars, float* 
 
                 uint32_t child_idx = get_node_index(root, child);
                 float cm = node_masses[child_idx];
+                if (cm > 0.0f) {
+                    mask |= (1 << i);
+                }
                 total_mass += cm;
                 weighted_x += node_com_x[child_idx] * cm;
                 weighted_y += node_com_y[child_idx] * cm;
                 weighted_z += node_com_z[child_idx] * cm;
             }
 
+            node->active_mask = mask;
             node_masses[idx] = total_mass;
             if (total_mass > 0.0f) {
                 node_com_x[idx] = weighted_x / total_mass;

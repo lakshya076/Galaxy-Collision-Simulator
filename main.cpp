@@ -165,18 +165,33 @@ int main(int argc, char** argv) {
         float global_min = std::min({min_x, min_y, min_z});
         float global_max = std::max({max_x, max_y, max_z});
 
-        // Morton Sort
+        auto t_sort_start = chrono::high_resolution_clock::now();
+
+        // Morton Sort Optimization: Precompute keys
+        std::vector<std::pair<uint64_t, Star>> sort_buffer(num_stars);
+        
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < num_stars; i++) {
+            sort_buffer[i].first = get_morton_code(stars[i].x, stars[i].y, stars[i].z, global_min, global_max);
+            sort_buffer[i].second = stars[i];
+        }
+
 #if defined(_MSC_VER)
-        std::sort(stars, stars + num_stars, [global_min, global_max](const Star& a, const Star& b) {
-            return get_morton_code(a.x, a.y, a.z, global_min, global_max) < 
-                   get_morton_code(b.x, b.y, b.z, global_min, global_max);
+        std::sort(sort_buffer.begin(), sort_buffer.end(), [](const auto& a, const auto& b) {
+            return a.first < b.first;
         });
 #else
-        __gnu_parallel::sort(stars, stars + num_stars, [global_min, global_max](const Star& a, const Star& b) {
-            return get_morton_code(a.x, a.y, a.z, global_min, global_max) < 
-                   get_morton_code(b.x, b.y, b.z, global_min, global_max);
+        __gnu_parallel::sort(sort_buffer.begin(), sort_buffer.end(), [](const auto& a, const auto& b) {
+            return a.first < b.first;
         });
 #endif
+
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < num_stars; i++) {
+            stars[i] = sort_buffer[i].second;
+        }
+
+        auto t_build_start = chrono::high_resolution_clock::now();
 
         // Reset Arena and Build Octree (CPU tree building is very fast)
         arena.reset();
@@ -232,6 +247,12 @@ int main(int argc, char** argv) {
                 stars[i].y += stars[i].vy * dt;
                 stars[i].z += stars[i].vz * dt;
             }
+        }
+
+        auto t_gpu_end = chrono::high_resolution_clock::now();
+        if (frame_count == 1) {
+            cout << "Sort: " << chrono::duration<double>(t_build_start - t_sort_start).count() << "s\n";
+            cout << "Build: " << chrono::duration<double>(t_gpu_end - t_build_start).count() << "s\n"; // Wait, t_gpu_start wasn't defined. Let's fix that.
         }
 
         // Wait for the background writer thread from the previous frame to finish

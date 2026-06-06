@@ -31,7 +31,8 @@ struct alignas(32) OctreeNode {
     }; // 8 bytes
 
     bool is_leaf; // 1 byte
-    uint8_t padding[7]; // 7 bytes padding to reach 32 bytes
+    uint8_t active_mask; // 1 byte
+    uint8_t padding[6]; // 6 bytes padding to reach 32 bytes
 };
 
 // Compile-time assertion to guarantee half-L1 Cache-Line layout
