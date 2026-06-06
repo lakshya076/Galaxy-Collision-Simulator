@@ -8,13 +8,12 @@ A high-performance, custom-built 3D Galaxy Collision Simulator written in pure C
 
 This project is built incrementally following the roadmap:
 
-- **Foundation & Spatial DB Integration** - Standardized particle representations, memory pooling, and importing stellar catalogs from spatial data sources. This was completed in another project first stored as **[Spatial_DB Repository](https://github.com/lakshya076/Spatial_DB)**. The full data is stored in the Octree format to optimize Barnes-Hut later.
+- **Foundation & Spatial DB Integration** - Standardized particle representations, memory pooling, and importing stellar catalogs from spatial data sources. This was completed in another project first stored as **[Spatial_DB Repository](https://github.com/lakshya076/Spatial_DB)**. Currently instead of loading external data, mathematical models are used to generate two galaxies, the full generated data is stored in the Octree format to optimize Barnes-Hut later.
 - **Initial Conditions Generator** - Mathematical generation of stable galaxies using
   - Miyamoto-Nagai stellar discs
   - Hernquist bulges
   - Dark Matter Halos
-- **Barnes-Hut Gravity Approximation and Leapfrog Integration** - Bottom-up mass aggregation and fast gravitational force calculation using the $\theta = \frac{s}{d}$ approximation.
-- **Master Simulation Loop** - Main temporal integration loop connecting the octree structures with Newtonian physics over time steps ($\Delta t$).
+- **Barnes-Hut Gravity Approximation and Leapfrog Integration** - Bottom-up mass aggregation and fast gravitational force calculation using the $\theta = \frac{s}{d}$ approximation. Then the temporal integrator calculates the updated velocities and positions of each star over time steps ($\Delta t$).
 - **Live OpenGL Graphics Pipeline** - Real-time visualization using GLFW/GLEW with a free-flying WASD camera. The `PlaybackStar` memory layout streams directly into OpenGL Vertex Buffer Objects (VBOs) with zero overhead.
 - **Offline Physics Baking** - Decoupling the engine into a background Physics Baker (dumps binary data to SSD) and a GPU Playback Viewer for an adjustable FPS viewing of extremely heavy simulations.
 - **GPU/CUDA Optimization** - CPU based simulation cost around 2 seconds per frame generation. CUDA optimizations were made to run the heavy compute directly onto the GPU to reduce this time to ~0.4 seconds per frame generation.
@@ -57,6 +56,7 @@ Because the `OctreeNode` cannot exceed 32 bytes, all node-level physics data (su
 ### 7. GPU CUDA Architecture
 * **Structure of Arrays (SoA):** Before launching the physics kernels, the `Star` array (AoS) is transposed into separate parallel arrays (`d_x`, `d_y`, `d_z`, etc.) in VRAM. This guarantees perfectly coalesced memory access across 32-thread warps.
 * **Non-Recursive Octree Traversal:** The GPU traverses the Barnes-Hut octree using a highly optimized iterative stack stored locally per-thread. This avoids recursive function calls which would otherwise cause massive local memory allocation and slow down the GPU.
+* **Active Node Masking:** To prevent the GPU from wasting cycles evaluating empty regions of space, the CPU tree builder populates an 8-bit `active_mask` in each `OctreeNode`. The GPU checks this bitmask and only pushes populated children onto its traversal stack.
 * **Zero-Copy VBO Interop:** In Live mode, CUDA registers and maps the OpenGL Vertex Buffer Objects (VBOs) directly. The calculated physics positions are written straight into the graphics memory buffer. This eliminates the need to transfer the positions back to the CPU over the PCIe bus to render them, massively improving framerates.
 
 ---
@@ -71,10 +71,19 @@ The initial galaxies are generated using the following astronomical density prof
 
 ---
 
-## 📂 Data & Stellar Database
+## ⏱️ Performance Benchmarks
 
-The parser and database used to process and parse real star catalogs into binary formats (such as the parsed geometry and payload files used in earlier versions of this simulation) are hosted in a separate repository:
-👉 **[Spatial_DB Repository](https://github.com/lakshya076/Spatial_DB)**
+Simulating the gravitational physics for **300,000 particles** using the $O(N \log N)$ Barnes-Hut algorithm is extremely heavy. The system was engineered across several major revisions to maximize framerates. 
+
+Here is the evolution of the per-frame generation time (lower is better):
+
+| Implementation Phase | Frame Gen Time | Effective FPS | Notes |
+| :--- | :--- | :--- | :--- |
+| **1. Baseline CPU (Single Threaded)** | ~39.96 s | ~0.025 FPS | Initial Conditions.|
+| **1. Baseline CPU (OpenMP)** | ~2.00 s | ~0.5 FPS | Achieved parallelization using OpenMP.|
+| **2. Initial CUDA GPU Port** | ~0.45 s | ~2.2 FPS | Naive GPU physics computation using standard data layouts. |
+| **3. Heavily Optimized GPU** | ~0.30 s | ~3.3 FPS | **Current State.** 30% speedup achieved by pre-computing Morton Sorting on CPU (`0.02s`), switching to SoA VRAM layouts, storing the traversal stack in 64KB `__shared__` memory, caching reads with `__ldg`, and skipping empty space with the `active_mask`.<br><br>*(Note: The actual GPU math now only takes **0.05 seconds**. The total time is currently bottlenecked by the sequential CPU octree builder).* |
+| **4. Playback Mode (Zero-Physics)** | ~0.007 s | **Adjustable FPS** | Bypasses all physics and streams the baked `simulation.bin` directly into the GPU's VRAM. Limited only by disk read speed and monitor refresh rate. |
 
 ---
 
@@ -141,7 +150,7 @@ Calculates physics as fast as possible in the terminal (window rendering is disa
   ```
 
 #### 3. Playback Mode (Zero-Physics Viewer)
-Disables the physics engine entirely. Initializes OpenGL and rapidly streams the pre-baked frames from `simulation.bin` directly into the VRAM at 60-144 FPS.
+Disables the physics engine entirely. Initializes OpenGL and rapidly streams the pre-baked frames from `simulation.bin` directly into the VRAM at adjustable FPS.
 * **GPU CUDA Build (Recommended):**
   ```bash
   nvcc -O3 -arch=sm_86 -DMODE_PLAYBACK -ccbin "D:\VisualStudio\VC\Tools\MSVC\14.50.35717\bin\Hostx64\x64" -Xcompiler "/openmp /fp:fast /arch:AVX2" .\main.cpp .\generator.cpp .\engine.cpp .\gravity_aggregator.cpp .\renderer.cpp .\cuda_engine.cu -o play.exe -I"C:\msys64\mingw64\include" "C:\msys64\mingw64\lib\libglfw3.dll.a" "C:\msys64\mingw64\lib\libglew32.dll.a" -lopengl32 -lgdi32 -luser32 -lshell32
