@@ -53,6 +53,11 @@ Because the `OctreeNode` cannot exceed 32 bytes, all node-level physics data (su
 * **Morton Z-Order Curve Sorting:** The `stars` array is parallel-sorted using GCC's `__gnu_parallel::sort` according to a 64-bit interleaved Morton Code before tree construction. This ensures OpenMP threads process physically adjacent subsets of the tree, maximizing spatial locality.
 * **Manual L1 Memory Prefetching:** The hottest direct-gravity math loop utilizes compiler intrinsics (`__builtin_prefetch`) to actively pull the *next* star's data into the L1 cache while the FPU computes the inverse square root math for the *current* star.
 
+### 7. GPU CUDA Architecture
+* **Structure of Arrays (SoA):** Before launching the physics kernels, the unified `Star` array (AoS) is transposed into separate parallel arrays (`d_x`, `d_y`, `d_z`, etc.) in VRAM. This guarantees perfectly coalesced memory access across 32-thread warps.
+* **Non-Recursive Octree Traversal:** The GPU traverses the Barnes-Hut octree using a highly optimized iterative stack stored locally per-thread. This avoids recursive function calls which would otherwise cause massive local memory allocation and slow down the GPU.
+* **Zero-Copy VBO Interop:** In Live mode, CUDA registers and maps the OpenGL Vertex Buffer Objects (VBOs) directly. The calculated physics positions are written straight into the graphics memory buffer. This eliminates the need to transfer the positions back to the CPU over the PCIe bus to render them, massively improving framerates.
+
 ---
 
 ## 🧪 Mathematical Formulations (Initial Conditions)
@@ -109,8 +114,8 @@ This simulator is split into three decoupled execution modes, allowing you to ba
 Runs the physics engine and immediately renders each frame. Best for real-time visualization of moderate to large particle counts.
 * **GPU CUDA Build (Recommended):**
   ```bash
-  nvcc -O3 -arch=sm_86 -ccbin "D:\VisualStudio\VC\Tools\MSVC\14.50.35717\bin\Hostx64\x64" -Xcompiler "/openmp /fp:fast /arch:AVX2" .\main.cpp .\generator.cpp .\engine.cpp .\gravity_aggregator.cpp .\renderer.cpp .\cuda_engine.cu -o simulator_gpu.exe -I"C:\msys64\mingw64\include" "C:\msys64\mingw64\lib\libglfw3.dll.a" "C:\msys64\mingw64\lib\libglew32.dll.a" -lopengl32 -lgdi32 -luser32 -lshell32
-  $env:PATH += ";C:\msys64\mingw64\bin"; .\simulator_gpu.exe
+  nvcc -O3 -arch=sm_86 -ccbin "D:\VisualStudio\VC\Tools\MSVC\14.50.35717\bin\Hostx64\x64" -Xcompiler "/openmp /fp:fast /arch:AVX2" .\main.cpp .\generator.cpp .\engine.cpp .\gravity_aggregator.cpp .\renderer.cpp .\cuda_engine.cu -o main.exe -I"C:\msys64\mingw64\include" "C:\msys64\mingw64\lib\libglfw3.dll.a" "C:\msys64\mingw64\lib\libglew32.dll.a" -lopengl32 -lgdi32 -luser32 -lshell32
+  $env:PATH += ";C:\msys64\mingw64\bin"; .\main.exe
   ```
   *(Pass the `--cpu` argument at runtime to bypass the GPU and run on OpenMP CPU fallback.)*
 * **CPU-Only GCC Build:**
@@ -123,22 +128,22 @@ Runs the physics engine and immediately renders each frame. Best for real-time v
 Calculates physics as fast as possible in the terminal (window rendering is disabled) and dumps the visible stars to `simulation.bin` using the compact 16-byte `PlaybackStar` format. For a 1000 frame bake, this file reaches around **3.2 GB** in size (down from the uncompressed **9.2 GB** thanks to dark matter filtering and attribute stripping).
 * **GPU CUDA Build (Recommended):**
   ```bash
-  nvcc -O3 -arch=sm_86 -DMODE_BAKE -ccbin "D:\VisualStudio\VC\Tools\MSVC\14.50.35717\bin\Hostx64\x64" -Xcompiler "/openmp /fp:fast /arch:AVX2" .\main.cpp .\generator.cpp .\engine.cpp .\gravity_aggregator.cpp .\renderer.cpp .\cuda_engine.cu -o bake_gpu.exe -I"C:\msys64\mingw64\include" "C:\msys64\mingw64\lib\libglfw3.dll.a" "C:\msys64\mingw64\lib\libglew32.dll.a" -lopengl32 -lgdi32 -luser32 -lshell32
-  .\bake_gpu.exe <num_frames>
+  nvcc -O3 -arch=sm_86 -DMODE_BAKE -ccbin "D:\VisualStudio\VC\Tools\MSVC\14.50.35717\bin\Hostx64\x64" -Xcompiler "/openmp /fp:fast /arch:AVX2" .\main.cpp .\generator.cpp .\engine.cpp .\gravity_aggregator.cpp .\renderer.cpp .\cuda_engine.cu -o bake.exe -I"C:\msys64\mingw64\include" "C:\msys64\mingw64\lib\libglfw3.dll.a" "C:\msys64\mingw64\lib\libglew32.dll.a" -lopengl32 -lgdi32 -luser32 -lshell32
+  $env:Path += ";C:\msys64\mingw64\bin"; .\bake.exe <num_frames>
   ```
-  *(Pass `--cpu` as the second argument, e.g. `.\bake_gpu.exe 1000 --cpu`, to bake using the CPU engine.)*
+  *(Pass `--cpu` as the second argument, e.g. `.\bake.exe 1000 --cpu`, to bake using the CPU engine.)*
 * **CPU-Only GCC Build:**
   ```bash
   g++ -std=c++17 -O3 -fopenmp -ffast-math -march=native -DMODE_BAKE .\main.cpp .\generator.cpp .\engine.cpp .\gravity_aggregator.cpp .\renderer.cpp -o bake_cpu.exe -I"C:\msys64\mingw64\include" -L"C:\msys64\mingw64\lib" -lglfw3 -lglew32 -lopengl32 -lgdi32
-  .\bake_cpu.exe <num_frames>
+  $env:Path += ";C:\msys64\mingw64\bin"; .\bake_cpu.exe <num_frames>
   ```
 
 #### 3. Playback Mode (Zero-Physics Viewer)
 Disables the physics engine entirely. Initializes OpenGL and rapidly streams the pre-baked frames from `simulation.bin` directly into the VRAM at 60-144 FPS.
 * **GPU CUDA Build (Recommended):**
   ```bash
-  nvcc -O3 -arch=sm_86 -DMODE_PLAYBACK -ccbin "D:\VisualStudio\VC\Tools\MSVC\14.50.35717\bin\Hostx64\x64" -Xcompiler "/openmp /fp:fast /arch:AVX2" .\main.cpp .\generator.cpp .\engine.cpp .\gravity_aggregator.cpp .\renderer.cpp .\cuda_engine.cu -o play_gpu.exe -I"C:\msys64\mingw64\include" "C:\msys64\mingw64\lib\libglfw3.dll.a" "C:\msys64\mingw64\lib\libglew32.dll.a" -lopengl32 -lgdi32 -luser32 -lshell32
-  $env:PATH += ";C:\msys64\mingw64\bin"; .\play_gpu.exe
+  nvcc -O3 -arch=sm_86 -DMODE_PLAYBACK -ccbin "D:\VisualStudio\VC\Tools\MSVC\14.50.35717\bin\Hostx64\x64" -Xcompiler "/openmp /fp:fast /arch:AVX2" .\main.cpp .\generator.cpp .\engine.cpp .\gravity_aggregator.cpp .\renderer.cpp .\cuda_engine.cu -o play.exe -I"C:\msys64\mingw64\include" "C:\msys64\mingw64\lib\libglfw3.dll.a" "C:\msys64\mingw64\lib\libglew32.dll.a" -lopengl32 -lgdi32 -luser32 -lshell32
+  $env:PATH += ";C:\msys64\mingw64\bin"; .\play.exe
   ```
 * **CPU-Only GCC Build:**
   ```bash
