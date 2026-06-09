@@ -109,8 +109,8 @@ int main(int argc, char** argv) {
     std::vector<Accel> accels(num_stars);
 
     float G = 1.0f;
-    float epsilon_sq = 1e-3f;
-    float dt = 0.01f;
+    float epsilon_sq = 10.0f;
+    double simulation_time = 0.0;
 
     cout << "\nStarting Simulation..." << endl;
     
@@ -193,11 +193,15 @@ int main(int argc, char** argv) {
 
 
         if (use_gpu) {
-            cuda_physics_step(
-                stars, num_stars, G, epsilon_sq, dt,
+            float actual_dt = cuda_physics_step(
+                stars, num_stars, G, epsilon_sq, 0.01f,
                 global_min, global_max, false
             );
+            simulation_time += actual_dt;
         } else {
+            // CPU fallback logic
+            float dt = 0.01f;
+            simulation_time += dt;
             auto t_build_start = chrono::high_resolution_clock::now();
 
             // Reset Arena and Build CPU Octree
@@ -272,7 +276,7 @@ int main(int argc, char** argv) {
         total_time += diff.count();
 
         if (frame_count % 10 == 0) {
-            cout << "Baked " << frame_count << "/" << total_frames << " frames (" << total_time << "s)" << endl;
+            cout << "Baked " << frame_count << "/" << total_frames << " frames (" << total_time << "s) | SimTime: " << simulation_time << endl;
         }
     }
 
@@ -449,11 +453,14 @@ int main(int argc, char** argv) {
         float global_max = 10000.0f;
 
         if (use_gpu) {
-            cuda_physics_step(
-                stars, num_stars, G, epsilon_sq, dt,
+            float actual_dt = cuda_physics_step(
+                stars, num_stars, G, epsilon_sq, 0.01f,
                 global_min, global_max, true // use_interop = true for LIVE
             );
+            simulation_time += actual_dt;
         } else {
+            float dt = 0.01f; // CPU uses fixed dt
+            simulation_time += dt;
             // Calculate Bounds for CPU Octree only
             float min_x = numeric_limits<float>::max(), min_y = numeric_limits<float>::max(), min_z = numeric_limits<float>::max();
             float max_x = numeric_limits<float>::lowest(), max_y = numeric_limits<float>::lowest(), max_z = numeric_limits<float>::lowest();
@@ -541,17 +548,15 @@ int main(int argc, char** argv) {
         end_time = chrono::high_resolution_clock::now();
         chrono::duration<double> diff = end_time - start_time;
         if (frame_count % 60 == 0) {
-            cout << "Frame " << frame_count << " processing time: " << diff.count() << "s (" << 1.0/diff.count() << " FPS)" << endl;
+            cout << "Frame " << frame_count << " processing time: " << diff.count() << "s | SimTime: " << simulation_time << " | FPS: " << 1.0/diff.count() << endl;
         }
         frame_count++;
     }
 
-    #ifndef MODE_BAKE
     cleanup_opengl();
     if (use_gpu) {
         cuda_unregister_vbo();
     }
-    #endif
 #endif
 
     if (use_gpu) {

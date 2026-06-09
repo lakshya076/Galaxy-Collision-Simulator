@@ -19,6 +19,7 @@ float *d_vx, *d_vy, *d_vz;
 float *d_mass;
 uint8_t *d_r, *d_g, *d_b;
 uint8_t *d_type;
+int *d_max_accel_int;
 
 // Double Buffers for Sorting
 float *d_x_alt, *d_y_alt, *d_z_alt;
@@ -90,7 +91,7 @@ __global__ void transpose_soa_to_aos_kernel(
 __global__ void query_gravity_bvh_kernel(
     const float* x, const float* y, const float* z, const float* mass, 
     int num_stars, const BvhNodeTraverse* nodes, 
-    float G, float epsilon_sq, float3* accels
+    float G, float epsilon_sq, float3* accels, int* max_accel_int
 ) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= num_stars) return;
@@ -154,6 +155,9 @@ __global__ void query_gravity_bvh_kernel(
     }
     
     accels[i] = make_float3(ax, ay, az);
+    
+    float accel_mag_sq = ax*ax + ay*ay + az*az;
+    atomicMax(max_accel_int, __float_as_int(accel_mag_sq));
 }
 
 // Leapfrog integration
@@ -238,6 +242,8 @@ bool cuda_init(int num_stars) {
     cudaMalloc(&d_b, num_stars * sizeof(uint8_t));
     cudaMalloc(&d_type, num_stars * sizeof(uint8_t));
     
+    cudaMalloc(&d_max_accel_int, sizeof(int));
+
     // Allocate alternate SoA for sorting double-buffering
     cudaMalloc(&d_x_alt, num_stars * sizeof(float));
     cudaMalloc(&d_y_alt, num_stars * sizeof(float));
@@ -306,6 +312,7 @@ void cuda_cleanup() {
     cudaFree(d_g); d_g = nullptr;
     cudaFree(d_b); d_b = nullptr;
     cudaFree(d_type); d_type = nullptr;
+    cudaFree(d_max_accel_int); d_max_accel_int = nullptr;
 
     cudaFree(d_x_alt); d_x_alt = nullptr;
     cudaFree(d_y_alt); d_y_alt = nullptr;
@@ -356,7 +363,7 @@ void cuda_unregister_vbo() {
 }
 
 // Executes one simulation frame natively on the GPU
-void cuda_physics_step(
+float cuda_physics_step(
     Star* host_stars, 
     int num_stars, 
     float G, 
@@ -369,6 +376,9 @@ void cuda_physics_step(
     int threads = 256;
     int blocks_n = (num_stars + threads - 1) / threads;
     int blocks_n_minus_1 = (num_stars - 1 + threads - 1) / threads;
+
+    // Reset max acceleration tracker
+    cudaMemset(d_max_accel_int, 0, sizeof(int));
 
     compute_morton_and_indices_kernel<<<blocks_n, threads>>>(d_x, d_y, d_z, d_morton_keys, d_indices, num_stars, global_min, global_max);
     cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, d_morton_keys, d_morton_keys_out, d_indices, d_indices_out, num_stars);
@@ -396,7 +406,7 @@ void cuda_physics_step(
     aggregate_bvh_kernel<<<blocks_n, threads>>>(num_stars, d_bvh_nodes_tr, d_bvh_nodes_bd);
 
     cudaDeviceSynchronize();
-    query_gravity_bvh_kernel<<<blocks_n, threads>>>(d_x, d_y, d_z, d_mass, num_stars, d_bvh_nodes_tr, G, epsilon_sq, d_accels);
+    query_gravity_bvh_kernel<<<blocks_n, threads>>>(d_x, d_y, d_z, d_mass, num_stars, d_bvh_nodes_tr, G, epsilon_sq, d_accels, d_max_accel_int);
 
     integrate_kernel<<<blocks_n, threads>>>(d_x, d_y, d_z, d_vx, d_vy, d_vz, d_r, d_g, d_b, d_type, d_accels, dt, num_stars);
 
@@ -424,4 +434,5 @@ void cuda_physics_step(
         
         cudaMemcpy(host_stars, d_staging_stars, num_stars * sizeof(Star), cudaMemcpyDeviceToHost);
     }
+    return dt;
 }

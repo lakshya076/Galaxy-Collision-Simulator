@@ -19,13 +19,13 @@ void cuda_register_vbo(unsigned int vbo_id);
 void cuda_unregister_vbo();
 
 // Physics Step
-void cuda_physics_step(
+float cuda_physics_step(
     Star* host_stars, 
     int num_stars, 
     float G, 
     float epsilon_sq, 
     float dt,
-    float global_min,
-    float global_max,
+    float global_min, 
+    float global_max, 
     bool use_interop
 );
