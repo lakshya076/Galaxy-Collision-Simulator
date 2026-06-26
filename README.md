@@ -1,5 +1,7 @@
 # 3D Galaxy Collision Simulator
 
+https://github.com/user-attachments/assets/259565bc-35de-4133-8068-cd2d0b3a5668
+
 A high-performance, custom-built 3D Galaxy Collision Simulator written in pure C++ (using the C++17 Standard Library only). This project simulates the gravitational interaction and collision of two stable galaxies (comprising stellar discs, bulges, and massive dark matter halos) using a highly optimized Barnes-Hut octree.
 
 ---
